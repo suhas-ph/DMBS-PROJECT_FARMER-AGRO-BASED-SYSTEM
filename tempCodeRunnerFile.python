@@ -1,0 +1,370 @@
+import streamlit as st
+import mysql.connector
+from mysql.connector import Error
+
+# Function to connect to the database
+def connect_to_database():
+    try:
+        db = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            passwd="Suhas@1390",
+            database="farmer_agro"
+        )
+        return db
+    except Error as e:
+        st.error(f"Error: {e}")
+        return None
+
+# Function to sign up a new farmer
+def signup_farmer(name, phone, email, password):
+    try:
+        db = connect_to_database()
+        cursor = db.cursor()
+        cursor.execute("SELECT COUNT(*) FROM farmer")
+        farmer_count = cursor.fetchone()[0] + 1
+        farmer_id = f"F_{farmer_count}"
+        query = "INSERT INTO farmer (farmer_id, phone, name, email, password) VALUES (%s, %s, %s, %s, %s)"
+        cursor.execute(query, (farmer_id, phone, name, email, password))
+        db.commit()
+
+        st.success("Farmer signed up successfully!")
+        st.info(f"Your farmer_id: {farmer_id}")
+    except Error as e:
+        st.error(f"Error: {e}")
+    finally:
+        if db:
+            db.close()
+
+# Function to sign up a new buyer
+def signup_buyer(name, phone, email, password):
+    try:
+        db = connect_to_database()
+        cursor = db.cursor()
+        cursor.execute("SELECT COUNT(*) FROM buyer")
+        buyer_count = cursor.fetchone()[0] + 1
+        buyer_id = f"B_{buyer_count}"
+        query = "INSERT INTO buyer (buyer_id, phone, name, email, password) VALUES (%s, %s, %s, %s, %s)"
+        cursor.execute(query, (buyer_id, phone, name, email, password))
+        db.commit()
+
+        st.success("Buyer signed up successfully!")
+        st.info(f"Your buyer_id: {buyer_id}")
+    except Error as e:
+        st.error(f"Error: {e}")
+    finally:
+        if db:
+            db.close()
+
+# Function to authenticate user
+def authenticate_user(email, password):
+    try:
+        db = connect_to_database()
+        cursor = db.cursor()
+
+        # Authenticate farmer
+        query = "SELECT * FROM farmer WHERE email = %s AND password = %s"
+        cursor.execute(query, (email, password))
+        farmer = cursor.fetchone()
+
+        if farmer:
+            return farmer, "farmer"
+
+        # Authenticate buyer
+        query = "SELECT * FROM buyer WHERE email = %s AND password = %s"
+        cursor.execute(query, (email, password))
+        buyer = cursor.fetchone()
+
+        if buyer:
+            return buyer, "buyer"
+
+        return None, None
+
+    except Error as e:
+        st.error(f"Error: {e}")
+    finally:
+        if db:
+            db.close()
+
+# Function to get all products
+def get_products():
+    try:
+        db = connect_to_database()
+        cursor = db.cursor()
+
+        query = "SELECT * FROM product"
+        cursor.execute(query)
+        products = cursor.fetchall()
+
+        return products
+    except Error as e:
+        st.error(f"Error: {e}")
+    finally:
+        if db:
+            db.close()
+
+# Function to add a product for farmers
+def add_product(farmer_id, product_name, product_description, product_price):
+    try:
+        db = connect_to_database()
+        cursor = db.cursor()
+
+        # Calculate the new product ID
+        cursor.execute("SELECT COUNT(*) FROM product")
+        product_count = cursor.fetchone()[0] + 1
+        product_id = f"P_{product_count}"
+
+        # Insert the new product into the database
+        query = "INSERT INTO product (product_id, farmer_id, product_name, product_description, price) " \
+                "VALUES (%s, %s, %s, %s, %s)"
+        cursor.execute(query, (product_id, farmer_id, product_name, product_description, product_price))
+        db.commit()
+
+        st.success("Product added successfully!")
+    except Error as e:
+        st.error(f"Error: {e}")
+    finally:
+        if db:
+            db.close()
+
+# Function to view current orders for farmers
+def view_current_orders(farmer_id):
+    try:
+        db = connect_to_database()
+        cursor = db.cursor()
+
+        # Get all orders for the farmer's products
+        get_farmer_orders_query = """
+        SELECT O.order_id, O.product_id, P.product_name, P.price, O.quantity, O.total_price, O.buyer_id
+        FROM order_items O
+        INNER JOIN product P ON O.product_id = P.product_id
+        WHERE P.farmer_id = %s AND O.status = 'Confirmed'
+        """
+        cursor.execute(get_farmer_orders_query, (farmer_id,))
+        farmer_orders = cursor.fetchall()
+
+        # Display farmer orders
+        st.subheader("Current Orders:")
+        for order in farmer_orders:
+            st.write(f"Product: {order[2]} - Quantity: {order[4]}, Total: ₹{order[5]:.2f}, Buyer ID: {order[6]}")
+
+    except Error as e:
+        st.error(f"Error: {e}")
+    finally:
+        if db:
+            db.close()
+
+# Function to calculate total sales by farmer
+def get_total_sales_by_farmer(farmer_id):
+    try:
+        db = connect_to_database()
+        cursor = db.cursor()
+
+        # Display total sales for the farmer
+        get_total_sales_query = """
+        SELECT P.farmer_id, F.name, SUM(O.total_price) AS total_sales
+        FROM order_items O
+        INNER JOIN product P ON O.product_id = P.product_id
+        INNER JOIN farmer F ON P.farmer_id = F.farmer_id
+        WHERE P.farmer_id = %s
+        GROUP BY P.farmer_id, F.name
+        """
+        cursor.execute(get_total_sales_query, (farmer_id,))
+        total_sales = cursor.fetchall()
+
+        return total_sales
+
+    except Error as e:
+        st.error(f"Error: {e}")
+    finally:
+        if db:
+            db.close()
+
+# Function to place an order for buyers
+def place_order(buyer_id, product_id, quantity):
+    try:
+        db = connect_to_database()
+        cursor = db.cursor()
+
+        # Generate order_id
+        cursor.execute("SELECT COUNT(*) FROM order_items")
+        order_count = cursor.fetchone()[0] + 1
+        order_id = f"O_{order_count}"
+
+        # Get product details
+        product_query = "SELECT * FROM product WHERE product_id = %s"
+        cursor.execute(product_query, (product_id,))
+        product = cursor.fetchone()
+
+        subtotal = quantity * product[4]
+
+        # Insert order into the database
+        order_query = "INSERT INTO order_items (order_id, buyer_id, product_id, quantity, total_price, status) " \
+                      "VALUES (%s, %s, %s, %s, %s, 'Placed')"
+        cursor.execute(order_query, (order_id, buyer_id, product_id, quantity, subtotal))
+        db.commit()
+
+        st.success("Order placed successfully!")
+    except Error as e:
+        st.error(f"Error: {e}")
+    finally:
+        if db:
+            db.close()
+
+# Function to confirm an order using stored procedure
+def confirm_order(buyer_id):
+    try:
+        db = connect_to_database()
+        cursor = db.cursor()
+
+        # Get all orders for the buyer
+        get_buyer_orders_query = """
+        SELECT O.order_id, O.product_id, P.product_name, P.price, O.quantity, O.total_price
+        FROM order_items O
+        INNER JOIN product P ON O.product_id = P.product_id
+        WHERE O.buyer_id = %s
+        """
+        cursor.execute(get_buyer_orders_query, (buyer_id,))
+        buyer_orders = cursor.fetchall()
+
+        # Display buyer orders
+        st.subheader("Your Orders:")
+        for order in buyer_orders:
+            st.write(f"Product: {order[2]} - Quantity: {order[4]}, Total: ₹{order[5]:.2f}")
+
+        # Confirm Order button
+        if st.button("Confirm Order"):
+            # Extract the order_id from the first order (assuming single order confirmation)
+            order_id = buyer_orders[0][0]
+
+            # Call the stored procedure to confirm the order
+            cursor.callproc("ConfirmOrder", (buyer_id,))
+
+            # Commit the changes
+            db.commit()
+
+            st.success("Order confirmed successfully!")
+
+    except Error as e:
+        st.error(f"Error: {e}")
+    finally:
+        if db:
+            db.close()
+
+# Function to delete a user
+def delete_user(user_id, user_type):
+    try:
+        db = connect_to_database()
+        cursor = db.cursor()
+
+        if user_type == "farmer":
+            delete_user_query = "DELETE FROM farmer WHERE farmer_id = %s"
+        elif user_type == "buyer":
+            delete_user_query = "DELETE FROM buyer WHERE buyer_id = %s"
+        else:
+            st.error("Invalid user type")
+            return
+
+        cursor.execute(delete_user_query, (user_id,))
+        db.commit()
+
+        st.success("User deleted successfully!")
+
+    except Error as e:
+        st.error(f"Error: {e}")
+    finally:
+        if db:
+            db.close()
+
+# Streamlit UI
+def main():
+    st.title("Farmer Agro-Based Management System")
+
+    # Login and Signup Section
+    st.session_state.user_id = st.session_state.get("user_id", None)
+    st.session_state.user_type = st.session_state.get("user_type", None)
+
+    st.sidebar.title("Menu")
+
+    if st.session_state.user_type == "farmer":
+        menu_option = st.sidebar.radio("Choose an option", ["Login", "Signup", "View Products", "Add Product", "View Current Orders", "Delete User"])
+    elif st.session_state.user_type == "buyer":
+        menu_option = st.sidebar.radio("Choose an option", ["Login", "Signup", "View Products", "Place Order", "Confirm Order", "Delete User"])
+    else:
+        menu_option = st.sidebar.radio("Choose an option", ["Login", "Signup", "Delete User"])
+
+    if menu_option == "Login":
+        st.header("Login")
+        login_option = st.radio("Login as", ["Farmer", "Buyer"])
+        email = st.text_input("User login ID")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Login"):
+            user, user_type = authenticate_user(email, password)
+
+            if user_type == "farmer" and login_option == "Farmer":
+                st.session_state.user_id = user[0]
+                st.session_state.user_type = "farmer"
+                st.sidebar.success(f"Logged in as {user[2]}")
+            elif user_type == "buyer" and login_option == "Buyer":
+                st.session_state.user_id = user[0]
+                st.session_state.user_type = "buyer"
+                st.sidebar.success(f"Logged in as {user[2]}")
+            else:
+                st.sidebar.error("Authentication Failed. Please check your credentials.")
+
+    elif menu_option == "Signup":
+        st.header("Signup")
+        signup_option = st.radio("Signup as", ["Farmer", "Buyer"])
+        name = st.text_input("Full Name")
+        phone = st.text_input("Phone")
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        if st.button("Signup"):
+            if signup_option == "Farmer":
+                signup_farmer(name, phone, email, password)
+            elif signup_option == "Buyer":
+                signup_buyer(name, phone, email, password)
+
+    elif menu_option == "View Products" and st.session_state.user_type in ["farmer", "buyer"]:
+        st.header("View Products")
+        products = get_products()
+        if products:
+            for product in products:
+                st.write(f"Product Name: {product[2]} - Description: {product[3]} - Price: ₹{product[4]:.2f}")
+
+    elif menu_option == "Add Product" and st.session_state.user_type == "farmer":
+        st.header("Add Product")
+        product_name = st.text_input("Product Name")
+        product_description = st.text_input("Product Description")
+        product_price = st.number_input("Product Price (₹)", min_value=0.0, format="%.2f")
+        if st.button("Add Product"):
+            add_product(st.session_state.user_id, product_name, product_description, product_price)
+
+    elif menu_option == "View Current Orders" and st.session_state.user_type == "farmer":
+        st.header("View Current Orders")
+        view_current_orders(st.session_state.user_id)
+
+    elif menu_option == "Place Order" and st.session_state.user_type == "buyer":
+        st.header("Place Order")
+        products = get_products()
+        if products:
+            product_options = {f"{product[2]} - ₹{product[4]:.2f}": product[0] for product in products}
+            selected_product = st.selectbox("Select a product", list(product_options.keys()))
+            quantity = st.number_input("Quantity", min_value=1)
+            if st.button("Place Order"):
+                place_order(st.session_state.user_id, product_options[selected_product], quantity)
+
+    elif menu_option == "Confirm Order" and st.session_state.user_type == "buyer":
+        st.header("Confirm Order")
+        confirm_order(st.session_state.user_id)
+
+    elif menu_option == "Delete User":
+        st.header("Delete User")
+        if st.button("Delete User"):
+            delete_user(st.session_state.user_id, st.session_state.user_type)
+            st.session_state.user_id = None
+            st.session_state.user_type = None
+
+if __name__ == "__main__":
+    main()
